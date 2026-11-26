@@ -1,0 +1,1150 @@
+// =============================================================================
+// FOODSUPPLY — SCHÉMA BASE DE DONNÉES TIDB CLOUD (MYSQL SERVERLESS + PRISMA ORM)
+// Devise initiale : XOF (unités entières sans subdivisions)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS MÉTIER
+// =============================================================================
+
+enum RoleCode {
+  ADMIN
+  RESTAURANT
+  SUPPLIER
+  DRIVER
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum BusinessType {
+  FAST_FOOD
+  RESTAURANT
+  CREPERIE
+  BOULANGERIE
+  PATISSERIE
+  HOTEL
+  TRAITEUR
+  ENTREPRISE_RESTAURATION
+  AUTRE
+}
+
+enum VerificationStatus {
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum SupplierActivityType {
+  PRODUCTEUR
+  GROSSISTE
+  IMPORTATEUR
+  ELEVEUR
+  PECHEUR
+  TRANSFORMATEUR
+  EMBALLAGES
+  AUTRE
+}
+
+enum SupplierSubmissionStatus {
+  EN_ATTENTE_VALIDATION
+  EN_COURS_EXAMEN
+  APPROUVE
+  REFUSE
+  SUSPENDU
+}
+
+enum SupplierDocumentType {
+  NINEA
+  REGISTRE_COMMERCE
+  PIECE_IDENTITE
+  AGREMENT_SANITAIRE
+  RIB
+  AUTRE
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum VehicleType {
+  MOTO
+  TRICYCLE
+  FOURGONNETTE
+  CAMION_FRIGO
+}
+
+enum MarginType {
+  PERCENTAGE
+  FIXED_XOF
+}
+
+enum StorageType {
+  AMBIENT
+  CHILLED
+  FROZEN
+}
+
+enum AvailabilityStatus {
+  IN_STOCK
+  ON_CONFIRMATION
+  OUT_OF_STOCK
+}
+
+enum CartStatus {
+  ACTIVE
+  CONVERTED
+  ARCHIVED
+}
+
+enum OrderStatus {
+  BROUILLON
+  EN_ATTENTE_CONFIRMATION
+  PARTIELLEMENT_CONFIRME
+  EN_ATTENTE_PAIEMENT
+  PAYEE
+  EN_PREPARATION
+  PRETE_A_COLLECTER
+  EN_COLLECTE
+  EN_LIVRAISON
+  LIVREE
+  ANNULEE
+  REMBOURSEMENT_EN_COURS
+  REMBOURSEE
+  ECHEC
+}
+
+enum OrderItemStatus {
+  PENDING
+  CONFIRMED
+  ADJUSTED
+  REJECTED
+}
+
+enum SupplierOrderStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  ADJUSTED
+  REJECTED
+  PREPARING
+  READY_FOR_PICKUP
+  PICKED_UP
+  CANCELLED
+}
+
+enum PaymentMethod {
+  WAVE
+  ORANGE_MONEY
+  CARD
+  BANK_TRANSFER
+  CASH_ON_DELIVERY
+}
+
+enum PaymentProviderCode {
+  SANDBOX
+  WAVE
+  ORANGE_MONEY
+  CARD_GATEWAY
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  INITIATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum RefundStatus {
+  REQUESTED
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum DeliveryStatus {
+  PENDING_ASSIGNMENT
+  ASSIGNED
+  ACCEPTED
+  PICKING_UP
+  IN_TRANSIT
+  DELIVERED
+  INCIDENT
+  CANCELLED
+}
+
+enum DeliveryTaskStatus {
+  PENDING
+  EN_ROUTE
+  PICKED_UP
+  ISSUE
+}
+
+enum DeliveryProofType {
+  PHOTO
+  RECIPIENT_CODE
+  SIGNATURE_NAME
+}
+
+enum InvoicePaymentStatus {
+  UNPAID
+  PAID
+  REFUNDED
+}
+
+enum SettlementStatus {
+  PENDING
+  SCHEDULED
+  PAID
+  CANCELLED
+}
+
+enum PayoutMethod {
+  WAVE
+  ORANGE_MONEY
+  BANK_TRANSFER
+  CASH_RECEIPT
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// =============================================================================
+// 1. IDENTITÉ, RÔLES & PERMISSIONS (RBAC)
+// =============================================================================
+
+model User {
+  id              String     @id @default(cuid())
+  email           String     @unique
+  passwordHash    String
+  fullName        String
+  phone           String?
+  avatarUrl       String?    @db.Text
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  sessionVersion  Int        @default(1)
+  lastLoginAt     DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  roles                   UserRole[]
+  passwordResetTokens     PasswordResetToken[]
+  restaurant              Restaurant?
+  supplier                Supplier?            @relation("SupplierOwner")
+  verifiedSuppliers       Supplier[]           @relation("SupplierVerifier")
+  reviewedDocuments       SupplierDocument[]          @relation("DocumentReviewer")
+  reviewedSubmissions     SupplierProductSubmission[] @relation("SubmissionReviewer")
+  driver                  Driver?                     @relation("DriverOwner")
+  verifiedDrivers         Driver[]             @relation("DriverVerifier")
+  cancelledOrders         Order[]              @relation("OrderCanceller")
+  orderStatusChanges      OrderStatusHistory[] @relation("OrderStatusActor")
+  initiatedRefunds        Refund[]             @relation("RefundInitiator")
+  paidSupplierSettlements SupplierSettlement[] @relation("SettlementPayer")
+  paidDriverPayouts       DriverPayout[]       @relation("PayoutPayer")
+  notifications           Notification[]
+  supportTickets          SupportTicket[]
+  auditLogs               AuditLog[]
+  updatedSettings         PlatformSetting[]    @relation("SettingUpdater")
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  code        RoleCode @unique
+  name        String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  module      String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  roles RolePermission[]
+
+  @@index([module])
+}
+
+model UserRole {
+  userId     String
+  roleId     String
+  assignedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// =============================================================================
+// 2. PROFILS MÉTIERS
+// =============================================================================
+
+model Restaurant {
+  id           String       @id @default(cuid())
+  userId       String       @unique
+  businessName String
+  businessType BusinessType @default(RESTAURANT)
+  ninea        String?
+  rcNumber     String?
+  contactPhone String
+  contactEmail String?
+  logoUrl        String?      @db.Text
+  isActive       Boolean      @default(true)
+  creditEnabled  Boolean      @default(false)
+  creditLimitXof Int          @default(0)
+  creditTermDays Int          @default(7)
+  createdAt      DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  user      User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  addresses RestaurantAddress[]
+  carts     Cart[]
+  favorites Favorite[]
+  orders    Order[]
+  invoices  Invoice[]
+
+  @@index([businessType])
+  @@index([isActive])
+}
+
+model RestaurantAddress {
+  id           String    @id @default(cuid())
+  restaurantId String
+  label        String
+  street       String
+  neighborhood String
+  city         String    @default("Dakar")
+  landmark     String?
+  contactName  String
+  contactPhone String
+  isDefault    Boolean   @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  carts      Cart[]
+
+  @@index([restaurantId])
+  @@index([neighborhood])
+}
+
+model Supplier {
+  id                   String               @id @default(cuid())
+  userId               String               @unique
+  companyName          String
+  tradeName            String?
+  activityType         SupplierActivityType @default(GROSSISTE)
+  ninea                String?
+  rcNumber             String?
+  description          String?              @db.Text
+  pickupAddress        String
+  pickupNeighborhood   String
+  pickupCity           String               @default("Dakar")
+  pickupLandmark       String?
+  contactPhone         String
+  verificationStatus   VerificationStatus   @default(PENDING)
+  verifiedAt           DateTime?
+  verifiedById         String?
+  rejectionReason      String?              @db.Text
+  payoutMethod         PayoutMethod         @default(WAVE)
+  payoutAccountMasked  String?
+  defaultPrepTimeHours Int                  @default(4)
+  isActive             Boolean              @default(true)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  user               User                        @relation("SupplierOwner", fields: [userId], references: [id], onDelete: Restrict)
+  verifiedBy         User?                       @relation("SupplierVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  documents          SupplierDocument[]
+  productSubmissions SupplierProductSubmission[]
+  offers             SupplierOffer[]
+  supplierOrders     SupplierOrder[]
+  deliveryTasks      DeliveryTask[]
+  settlements        SupplierSettlement[]
+
+  @@index([verificationStatus])
+  @@index([pickupNeighborhood])
+  @@index([isActive])
+}
+
+model SupplierProductSubmission {
+  id                 String                   @id @default(cuid())
+  supplierId         String
+  categoryId         String
+  title              String
+  description        String?                  @db.Text
+  unitLabel          String
+  origin             String?                  @default("Sénégal")
+  storageType        StorageType              @default(AMBIENT)
+  isFragile          Boolean                  @default(false)
+  supplyPriceXof     Int
+  negotiatedPriceXof Int?
+  availableQty       Int                      @default(0)
+  minOrderQty        Int                      @default(1)
+  isAvailable        Boolean                  @default(true)
+  status             SupplierSubmissionStatus @default(EN_ATTENTE_VALIDATION)
+  adminReviewNote    String?                  @db.Text
+  reviewedById       String?
+  reviewedAt         DateTime?
+  publishedProductId String?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  supplier         Supplier               @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  category         Category               @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  reviewedBy       User?                  @relation("SubmissionReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  publishedProduct Product?               @relation(fields: [publishedProductId], references: [id], onDelete: SetNull)
+  images           SupplierProductImage[]
+
+  @@index([supplierId, status])
+  @@index([status, createdAt])
+  @@index([categoryId])
+}
+
+model SupplierProductImage {
+  id                   String   @id @default(cuid())
+  submissionId         String
+  storageKey           String   @unique
+  url                  String   @db.Text
+  mimeType             String
+  sizeBytes            Int
+  isSelectedForCatalog Boolean  @default(false)
+  displayOrder         Int      @default(0)
+  createdAt            DateTime @default(now())
+
+  submission SupplierProductSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId, displayOrder])
+}
+
+model SupplierDocument {
+  id           String               @id @default(cuid())
+  supplierId   String
+  type         SupplierDocumentType
+  fileName     String
+  storageKey   String               @unique
+  mimeType     String
+  sizeBytes    Int
+  status       DocumentStatus       @default(PENDING)
+  reviewNote   String?              @db.Text
+  reviewedById String?
+  reviewedAt   DateTime?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  reviewedBy User?    @relation("DocumentReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([supplierId])
+  @@index([status])
+}
+
+model Driver {
+  id                  String             @id @default(cuid())
+  userId              String             @unique
+  vehicleType         VehicleType        @default(MOTO)
+  licensePlate        String?
+  driverLicenseNumber String?
+  hasColdBox          Boolean            @default(false)
+  verificationStatus  VerificationStatus @default(PENDING)
+  verifiedAt          DateTime?
+  verifiedById        String?
+  isAvailable         Boolean            @default(true)
+  zoneCoverage        String             @default("Dakar")
+  payoutMethod        PayoutMethod       @default(WAVE)
+  payoutAccountMasked String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  user           User            @relation("DriverOwner", fields: [userId], references: [id], onDelete: Restrict)
+  verifiedBy     User?           @relation("DriverVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  deliveries     Delivery[]
+  deliveryProofs DeliveryProof[]
+  payouts        DriverPayout[]
+
+  @@index([verificationStatus, isAvailable])
+  @@index([hasColdBox])
+}
+
+// =============================================================================
+// 3. CATALOGUE, OFFRES & MARGES
+// =============================================================================
+
+model Category {
+  id           String      @id @default(cuid())
+  name         String      @unique
+  slug         String      @unique
+  description  String?     @db.Text
+  imageUrl     String?     @db.Text
+  iconName     String?
+  displayOrder Int         @default(0)
+  isActive     Boolean     @default(true)
+  marginType   MarginType?
+  marginValue  Int?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  products            Product[]
+  supplierSubmissions SupplierProductSubmission[]
+
+  @@index([isActive, displayOrder])
+}
+
+model Product {
+  id          String      @id @default(cuid())
+  categoryId  String
+  name        String
+  slug        String      @unique
+  sku         String      @unique
+  description String?     @db.Text
+  imageUrl    String?     @db.Text
+  galleryUrls Json?
+  unitLabel   String
+  origin      String?     @default("Sénégal")
+  storageType StorageType @default(AMBIENT)
+  isFragile   Boolean     @default(false)
+  isActive    Boolean     @default(true)
+  marginType  MarginType?
+  marginValue Int?
+  volumeTiers Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  category            Category                    @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  offers              SupplierOffer[]
+  supplierSubmissions SupplierProductSubmission[]
+  favorites           Favorite[]
+  orderItems         OrderItem[]
+  supplierOrderItems SupplierOrderItem[]
+  supportTickets     SupportTicket[]
+
+  @@index([categoryId, isActive])
+  @@index([storageType])
+}
+
+model SupplierOffer {
+  id                  String             @id @default(cuid())
+  supplierId          String
+  productId           String
+  supplierPriceXof    Int
+  minOrderQty         Int                @default(1)
+  maxOrderQty         Int?
+  stockQty            Int?
+  availability        AvailabilityStatus @default(ON_CONFIRMATION)
+  leadTimeHours       Int                @default(24)
+  isActive            Boolean            @default(true)
+  marginTypeOverride  MarginType?
+  marginValueOverride Int?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  supplier           Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  product            Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  cartItems          CartItem[]
+  orderItems         OrderItem[]
+  supplierOrderItems SupplierOrderItem[]
+
+  @@unique([supplierId, productId])
+  @@index([productId, isActive, availability])
+  @@index([supplierId, isActive])
+}
+
+// =============================================================================
+// 4. PANIER & FAVORIS
+// =============================================================================
+
+model Cart {
+  id                String     @id @default(cuid())
+  restaurantId      String
+  status            CartStatus @default(ACTIVE)
+  deliveryAddressId String?
+  notes             String?    @db.Text
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  restaurant      Restaurant         @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  deliveryAddress RestaurantAddress? @relation(fields: [deliveryAddressId], references: [id], onDelete: SetNull)
+  items           CartItem[]
+
+  @@index([restaurantId, status])
+}
+
+model CartItem {
+  id              String   @id @default(cuid())
+  cartId          String
+  supplierOfferId String
+  quantity        Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  cart          Cart          @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  supplierOffer SupplierOffer @relation(fields: [supplierOfferId], references: [id], onDelete: Cascade)
+
+  @@unique([cartId, supplierOfferId])
+  @@index([supplierOfferId])
+}
+
+model Favorite {
+  id           String   @id @default(cuid())
+  restaurantId String
+  productId    String
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, productId])
+  @@index([productId])
+}
+
+// =============================================================================
+// 5. COMMANDES & HISTORIQUE IMMUABLE
+// =============================================================================
+
+model Order {
+  id                      String      @id @default(cuid())
+  orderNumber             String      @unique
+  restaurantId            String?
+  isGuestOrder            Boolean     @default(false)
+  guestRestaurantName     String?
+  guestContactName        String?
+  guestPhone              String?
+  guestEmail              String?
+  guestTrackingTokenHash  String?     @unique
+  deliverySlot            String?
+  deliveryAddressSnapshot Json
+  status                  OrderStatus @default(BROUILLON)
+  currency                String      @default("XOF")
+  subtotalSupplierXof     Int         @default(0)
+  subtotalClientXof       Int         @default(0)
+  marginTotalXof          Int         @default(0)
+  deliveryFeeXof          Int         @default(0)
+  totalClientXof          Int         @default(0)
+  requiresClientApproval  Boolean     @default(false)
+  clientApprovedAt        DateTime?
+  isCreditOrder           Boolean     @default(false)
+  paymentDueAt            DateTime?
+  notes                   String?     @db.Text
+  cancelledReason         String?     @db.Text
+  cancelledById           String?
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+
+  restaurant     Restaurant?          @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+  cancelledBy    User?                @relation("OrderCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
+  items          OrderItem[]
+  supplierOrders SupplierOrder[]
+  statusHistory  OrderStatusHistory[]
+  payments       Payment[]
+  refunds        Refund[]
+  delivery       Delivery?
+  invoice        Invoice?
+  supportTickets SupportTicket[]
+
+  @@index([restaurantId, createdAt])
+  @@index([isGuestOrder, createdAt])
+  @@index([guestPhone])
+  @@index([status, createdAt])
+  @@index([isCreditOrder, paymentDueAt])
+}
+
+model SupplierOrder {
+  id                  String              @id @default(cuid())
+  reference           String              @unique
+  orderId             String
+  supplierId          String
+  status              SupplierOrderStatus @default(PENDING_CONFIRMATION)
+  subtotalSupplierXof Int                 @default(0)
+  supplierNote        String?             @db.Text
+  confirmedAt         DateTime?
+  readyAt             DateTime?
+  pickedUpAt          DateTime?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  order        Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  supplier     Supplier            @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  items        SupplierOrderItem[]
+  orderItems   OrderItem[]
+  deliveryTask DeliveryTask?
+  settlement   SupplierSettlement?
+
+  @@index([orderId])
+  @@index([supplierId, status])
+}
+
+model OrderItem {
+  id                        String          @id @default(cuid())
+  orderId                   String
+  supplierOrderId           String
+  productId                 String
+  supplierOfferId           String
+  productNameSnapshot       String
+  unitLabelSnapshot         String
+  storageTypeSnapshot       StorageType     @default(AMBIENT)
+  isFragileSnapshot         Boolean         @default(false)
+  requestedQty              Int
+  confirmedQty              Int?
+  requestedSupplierPriceXof Int
+  confirmedSupplierPriceXof Int?
+  marginTypeSnapshot        MarginType
+  marginValueSnapshot       Int
+  clientUnitPriceXof        Int
+  lineSupplierTotalXof      Int
+  lineClientTotalXof        Int
+  lineMarginXof             Int
+  itemStatus                OrderItemStatus @default(PENDING)
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+
+  order             Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  supplierOrder     SupplierOrder      @relation(fields: [supplierOrderId], references: [id], onDelete: Restrict)
+  product           Product            @relation(fields: [productId], references: [id], onDelete: Restrict)
+  supplierOffer     SupplierOffer      @relation(fields: [supplierOfferId], references: [id], onDelete: Restrict)
+  supplierOrderItem SupplierOrderItem?
+
+  @@index([orderId])
+  @@index([supplierOrderId])
+  @@index([productId])
+}
+
+model SupplierOrderItem {
+  id                        String          @id @default(cuid())
+  supplierOrderId           String
+  orderItemId               String          @unique
+  productId                 String
+  supplierOfferId           String
+  productNameSnapshot       String
+  unitLabelSnapshot         String
+  requestedQty              Int
+  confirmedQty              Int?
+  requestedSupplierPriceXof Int
+  confirmedSupplierPriceXof Int?
+  lineSupplierTotalXof      Int
+  itemStatus                OrderItemStatus @default(PENDING)
+  supplierNote              String?         @db.Text
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+
+  supplierOrder SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Cascade)
+  orderItem     OrderItem     @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  product       Product       @relation(fields: [productId], references: [id], onDelete: Restrict)
+  supplierOffer SupplierOffer @relation(fields: [supplierOfferId], references: [id], onDelete: Restrict)
+
+  @@index([supplierOrderId])
+}
+
+model OrderStatusHistory {
+  id          String       @id @default(cuid())
+  orderId     String
+  fromStatus  OrderStatus?
+  toStatus    OrderStatus
+  changedById String?
+  reason      String?      @db.Text
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  changedBy User? @relation("OrderStatusActor", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId, createdAt])
+}
+
+// =============================================================================
+// 6. PAIEMENTS & REMBOURSEMENTS
+// =============================================================================
+
+model Payment {
+  id                    String              @id @default(cuid())
+  orderId               String
+  reference             String              @unique
+  provider              PaymentProviderCode
+  method                PaymentMethod
+  isSandbox             Boolean             @default(true)
+  amountXof             Int
+  currency              String              @default("XOF")
+  status                PaymentStatus       @default(INITIATED)
+  idempotencyKey        String              @unique
+  providerTransactionId String?             @unique
+  checkoutUrl           String?             @db.Text
+  paidAt                DateTime?
+  failedReason          String?             @db.Text
+  metadata              Json?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  order   Order          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  events  PaymentEvent[]
+  refunds Refund[]
+
+  @@index([orderId, status])
+  @@index([status, createdAt])
+}
+
+model PaymentEvent {
+  id              String    @id @default(cuid())
+  paymentId       String
+  providerEventId String    @unique
+  eventType       String
+  payload         Json
+  signatureValid  Boolean   @default(false)
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId, createdAt])
+}
+
+model Refund {
+  id               String       @id @default(cuid())
+  paymentId        String
+  orderId          String
+  reference        String       @unique
+  amountXof        Int
+  reason           String       @db.Text
+  status           RefundStatus @default(REQUESTED)
+  providerRefundId String?
+  initiatedById    String?
+  processedAt      DateTime?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  payment     Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  initiatedBy User?   @relation("RefundInitiator", fields: [initiatedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([status])
+}
+
+// =============================================================================
+// 7. LIVRAISONS
+// =============================================================================
+
+model Delivery {
+  id                   String         @id @default(cuid())
+  orderId              String         @unique
+  driverId             String?
+  externalDriverName   String?
+  externalDriverPhone  String?
+  status               DeliveryStatus @default(PENDING_ASSIGNMENT)
+  requiresColdChain    Boolean        @default(false)
+  hasFragileItems      Boolean        @default(false)
+  driverFeeXof         Int            @default(0)
+  pickupCount          Int            @default(1)
+  scheduledWindowStart DateTime?
+  scheduledWindowEnd   DateTime?
+  assignedAt           DateTime?
+  startedAt            DateTime?
+  deliveredAt          DateTime?
+  incidentNote         String?        @db.Text
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  order  Order           @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  driver Driver?         @relation(fields: [driverId], references: [id], onDelete: SetNull)
+  tasks  DeliveryTask[]
+  proofs DeliveryProof[]
+  payout DriverPayout?
+
+  @@index([driverId, status])
+  @@index([status, createdAt])
+}
+
+model DeliveryTask {
+  id                    String             @id @default(cuid())
+  deliveryId            String
+  supplierOrderId       String             @unique
+  supplierId            String
+  sequenceOrder         Int                @default(1)
+  pickupAddressSnapshot Json
+  status                DeliveryTaskStatus @default(PENDING)
+  pickedUpAt            DateTime?
+  notes                 String?            @db.Text
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  delivery      Delivery      @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  supplierOrder SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Restrict)
+  supplier      Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([deliveryId, sequenceOrder])
+  @@index([supplierId])
+}
+
+model DeliveryProof {
+  id                 String            @id @default(cuid())
+  deliveryId         String
+  type               DeliveryProofType
+  storageKey         String?
+  recipientName      String?
+  recipientPhone     String?
+  notes              String?           @db.Text
+  capturedByDriverId String
+  capturedAt         DateTime          @default(now())
+
+  delivery         Delivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  capturedByDriver Driver   @relation(fields: [capturedByDriverId], references: [id], onDelete: Restrict)
+
+  @@index([deliveryId])
+}
+
+// =============================================================================
+// 8. FACTURATION & REVERSEMENTS COMPTABLES
+// =============================================================================
+
+model Invoice {
+  id                String               @id @default(cuid())
+  invoiceNumber     String               @unique
+  orderId           String               @unique
+  restaurantId      String?
+  issuedAt          DateTime             @default(now())
+  subtotalClientXof Int
+  deliveryFeeXof    Int
+  totalClientXof    Int
+  currency          String               @default("XOF")
+  paymentStatus     InvoicePaymentStatus @default(UNPAID)
+  snapshotJson      Json
+  pdfStorageKey     String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  restaurant Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: Restrict)
+
+  @@index([restaurantId, issuedAt])
+  @@index([paymentStatus])
+}
+
+model SupplierSettlement {
+  id                  String           @id @default(cuid())
+  reference           String           @unique
+  supplierId          String
+  supplierOrderId     String           @unique
+  amountXof           Int
+  currency            String           @default("XOF")
+  status              SettlementStatus @default(PENDING)
+  payoutMethod        PayoutMethod     @default(WAVE)
+  externalTransferRef String?
+  paidAt              DateTime?
+  paidByAdminId       String?
+  notes               String?          @db.Text
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  supplier      Supplier      @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  supplierOrder SupplierOrder @relation(fields: [supplierOrderId], references: [id], onDelete: Restrict)
+  paidByAdmin   User?         @relation("SettlementPayer", fields: [paidByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([supplierId, status])
+  @@index([status, createdAt])
+}
+
+model DriverPayout {
+  id                  String           @id @default(cuid())
+  reference           String           @unique
+  driverId            String
+  deliveryId          String           @unique
+  amountXof           Int
+  currency            String           @default("XOF")
+  status              SettlementStatus @default(PENDING)
+  payoutMethod        PayoutMethod     @default(WAVE)
+  externalTransferRef String?
+  paidAt              DateTime?
+  paidByAdminId       String?
+  notes               String?          @db.Text
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  driver      Driver   @relation(fields: [driverId], references: [id], onDelete: Restrict)
+  delivery    Delivery @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  paidByAdmin User?    @relation("PayoutPayer", fields: [paidByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([driverId, status])
+  @@index([status, createdAt])
+}
+
+// =============================================================================
+// 9. NOTIFICATIONS, SUPPORT, AUDIT & PARAMÈTRES PLATEFORME
+// =============================================================================
+
+model Notification {
+  id        String              @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String              @db.Text
+  linkUrl   String?
+  channel   NotificationChannel @default(IN_APP)
+  isRead    Boolean             @default(false)
+  readAt    DateTime?
+  metadata  Json?
+  createdAt DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+}
+
+model SupportTicket {
+  id            String                @id @default(cuid())
+  ticketNumber  String                @unique
+  userId        String
+  orderId       String?
+  productId     String?
+  subject       String
+  category      String                @default("GENERAL")
+  message       String                @db.Text
+  status        SupportTicketStatus   @default(OPEN)
+  priority      SupportTicketPriority @default(MEDIUM)
+  adminResponse String?               @db.Text
+  resolvedAt    DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order   Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([status, priority])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?
+  action      String
+  entityType  String
+  entityId    String
+  beforeJson  Json?
+  afterJson   Json?
+  ipAddress   String?
+  userAgent   String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+  @@index([createdAt])
+}
+
+model PlatformSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  valueJson   Json
+  description String?  @db.Text
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  updatedBy User? @relation("SettingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+model ContactMessage {
+  id          String   @id @default(cuid())
+  reference   String   @unique
+  fullName    String
+  companyName String
+  email       String
+  phone       String
+  profileType String
+  subject     String
+  message     String   @db.Text
+  status      String   @default("NEW")
+  adminNote   String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model StoredMedia {
+  id         String   @id @default(cuid())
+  storageKey String   @unique
+  bucket     String
+  mimeType   String
+  sizeBytes  Int
+  blobUrl    String?  @db.Text
+  data       Bytes?   @db.MediumBlob
+  createdAt  DateTime @default(now())
+
+  @@index([bucket, createdAt])
+}
